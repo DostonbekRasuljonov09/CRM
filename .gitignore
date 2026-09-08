@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+staticfiles/
+*.log
+DEMO_LOGIN.txt
+.idea/
+.vscode/
+*.sqlite3
+media/
