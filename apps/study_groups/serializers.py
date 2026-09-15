@@ -25,7 +25,10 @@ class GroupSerializer(TenantModelSerializer):
             "max_students",
             "status",
         ]
-        read_only_fields = READ_ONLY
+        # status PATCH bilan o'zgarmaydi: u faqat /activate/ va /cancel/
+        # orqali o'zgaradi, aks holda xizmat mantiqi chetlab o'tilardi
+        # (ACTIVE bo'lib qolib darslar generatsiya bo'lmasligi mumkin edi)
+        read_only_fields = READ_ONLY + ["status"]
 
 
 class GroupScheduleSerializer(TenantModelSerializer):

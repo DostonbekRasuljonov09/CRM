@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from django.core.cache import cache
 from django.test import TestCase
 
 from apps.accounts.models import Membership, User
@@ -40,7 +41,13 @@ def make_membership(user, center, role=Membership.Role.ADMIN, status=Membership.
 
 
 def get_token(client, email, password=PAROL):
-    """Login qilib access token qaytaradi."""
+    """Login qilib access token qaytaradi.
+
+    Login endpointida tezlik cheklovi bor va cache testlar orasida saqlanadi,
+    shuning uchun hisobni tozalaymiz. Cheklovning o'zi alohida testda
+    tekshiriladi (apps/accounts/tests.py::LoginThrottleTest).
+    """
+    cache.clear()
     response = client.post(
         "/api/auth/login/",
         {"email": email, "password": password},
@@ -161,6 +168,12 @@ class TenantApiTestCase(TestCase):
         make_membership(self.admin_user, self.center)
         self.token = get_token(self.client, "admin@a.uz")
         self.headers = auth_headers(self.token, self.center)
+
+    @staticmethod
+    def rows(response):
+        """Sahifalangan ro'yxat javobidan yozuvlarni oladi."""
+        data = response.json()
+        return data["results"] if isinstance(data, dict) and "results" in data else data
 
     def api(self, method, url, data=None):
         """Autentifikatsiya va X-Center-Id bilan JSON so'rov."""

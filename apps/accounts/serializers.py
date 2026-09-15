@@ -3,12 +3,18 @@
 from rest_framework import serializers
 
 from apps.accounts.models import Membership, User
+from apps.common.serializers import TenantModelSerializer
 from apps.centers.models import Branch
 from apps.centers.serializers import CenterShortSerializer
 
 
-class MembershipSerializer(serializers.ModelSerializer):
-    """A'zolik. center faqat o'qish uchun - u serverda o'rnatiladi."""
+class MembershipSerializer(TenantModelSerializer):
+    """A'zolik. center faqat o'qish uchun - u serverda o'rnatiladi.
+
+    full_clean() ishlaydi: takroriy (user, center, role) 500 emas, 400.
+    """
+
+    tenant_fk_fields = ("branches",)
 
     branches = serializers.PrimaryKeyRelatedField(
         many=True,

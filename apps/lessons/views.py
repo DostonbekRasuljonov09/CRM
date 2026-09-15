@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
-from apps.accounts.models import Membership
 from apps.common.utils import client_ip
 from apps.common.viewsets import TenantReadUpdateViewSet
 from apps.lessons.models import Attendance, Lesson
@@ -29,6 +28,15 @@ class LessonViewSet(TenantReadUpdateViewSet):
     )
     serializer_class = LessonSerializer
 
+    # O'qituvchi davomat qo'yadi va mavzu yozadi, lekin faqat O'ZI dars
+    # beradigan darslarda (teacher_field object-level tekshiruvi).
+    write_roles = ("OWNER", "ADMIN")
+    action_roles = {
+        "attendance": ("OWNER", "ADMIN", "TEACHER"),
+        "partial_update": ("OWNER", "ADMIN", "TEACHER"),
+    }
+    teacher_field = "teacher"
+
     def get_queryset(self):
         """Filtrlar: group, date_from, date_to, teacher, status."""
         queryset = super().get_queryset()
@@ -47,12 +55,8 @@ class LessonViewSet(TenantReadUpdateViewSet):
         return queryset
 
     def _joriy_membership(self):
-        """Foydalanuvchining shu markazdagi faol a'zoligi."""
-        membership = Membership.objects.filter(
-            user=self.request.user,
-            center=self.request.center,
-            status=Membership.Status.ACTIVE,
-        ).first()
+        """So'rov aniqlagan a'zolik (resolve_center o'rnatib qo'ygan)."""
+        membership = getattr(self.request, "membership", None)
         if membership is None:
             raise DRFValidationError("Sizda bu markazda faol a'zolik yo'q.")
         return membership

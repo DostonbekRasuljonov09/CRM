@@ -1,6 +1,7 @@
 """Serializer bazalari."""
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from rest_framework import serializers
 
 
@@ -8,28 +9,46 @@ class ValidatedModelSerializer(serializers.ModelSerializer):
     """
     Saqlashdan oldin model full_clean() ini chaqiradi.
 
-    DRF ModelSerializer buni o'zi qilmaydi, natijada model clean() dagi
-    biznes qoidalari API orqali chetlab o'tilardi. clean() hisoblab qo'ygan
-    qiymatlar (masalan Group.end_date) ham shu yo'l bilan saqlanadi.
+    DRF ModelSerializer buni o'zi qilmaydi. Natijada model clean() dagi
+    biznes qoidalari API orqali chetlab o'tilardi va `unique_together`
+    buzilganda baza IntegrityError (500) bilan yiqilardi - `center`
+    read_only bo'lgani uchun DRF unique validatorini qo'shmaydi.
+    clean() hisoblab qo'ygan qiymatlar (Group.end_date) ham shu yo'l bilan saqlanadi.
     """
 
-    def _full_clean(self, instance):
+    def _full_clean(self, instance, exclude=None):
         try:
-            instance.full_clean()
+            instance.full_clean(exclude=exclude)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(serializers.as_serializer_error(exc))
 
+    def _pop_m2m(self, validated_data):
+        """M2M maydonlarni ajratadi - ular obyekt saqlangandan keyin o'rnatiladi."""
+        m2m = {}
+        for name, field in self.fields.items():
+            if isinstance(field, serializers.ManyRelatedField) and name in validated_data:
+                m2m[name] = validated_data.pop(name)
+        return m2m
+
+    @transaction.atomic
     def create(self, validated_data):
+        m2m = self._pop_m2m(validated_data)
         instance = self.Meta.model(**validated_data)
         self._full_clean(instance)
         instance.save()
+        for name, value in m2m.items():
+            getattr(instance, name).set(value)
         return instance
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        m2m = self._pop_m2m(validated_data)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         self._full_clean(instance)
         instance.save()
+        for name, value in m2m.items():
+            getattr(instance, name).set(value)
         return instance
 
 

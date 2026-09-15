@@ -330,8 +330,12 @@ Ustiga qo'shimcha 14 ta test — jami **26 ta**. Muhimlari:
 ```
 DEBUG=False
 ALLOWED_HOSTS=example.uz,www.example.uz
-SECURE_COOKIES=True
+SECURE_HTTPS=True
 ```
+
+`SECURE_HTTPS=True` HSTS, SSL redirect va secure cookie larni yoqadi —
+faqat haqiqatan HTTPS orqali ishlaganda qo'yiladi. Shu holatda
+`check --deploy` hech qanday ogohlantirish bermaydi.
 
 Statik fayllarni yig'ish va tekshirish:
 
@@ -340,7 +344,6 @@ python manage.py collectstatic
 python manage.py check --deploy
 ```
 
-`SECURE_COOKIES=True` ni faqat HTTPS orqali ishlaganda yoqing.
 
 ---
 
@@ -431,6 +434,7 @@ Django signal ishlatilmagan.
 | GET, POST, PATCH | `/api/students/` | o'quvchilar |
 | GET, POST, PATCH | `/api/groups/` | guruhlar |
 | POST | `/api/groups/<id>/activate/` | ACTIVE + darslar generatsiyasi |
+| POST | `/api/groups/<id>/cancel/` | CANCELLED + kelajakdagi darslar ham bekor qilinadi |
 | GET, POST | `/api/groups/<id>/schedules/` | jadval (o'zgarish → qayta generatsiya) |
 | PATCH | `/api/groups/<id>/schedules/<sid>/` | jadval qatorini tahrirlash |
 | GET, POST | `/api/groups/<id>/students/` | guruh o'quvchilari |
@@ -441,7 +445,15 @@ Django signal ishlatilmagan.
 | GET, POST | `/api/lessons/<id>/attendance/` | ommaviy davomat |
 
 `DELETE` hech qayerda yo'q. `/api/lessons/` ga `POST` — 405: darslar faqat
-generatsiya orqali paydo bo'ladi.
+generatsiya orqali paydo bo'ladi. `Group.status` — `read_only`: u faqat
+`/activate/` va `/cancel/` orqali o'zgaradi, aks holda guruh ACTIVE bo'lib
+qolib darslar generatsiya bo'lmasligi mumkin edi.
+
+**Ro'yxatlar sahifalangan** (`PAGE_SIZE=50`):
+
+```json
+{"count": 128, "next": "...?page=2", "previous": null, "results": [...]}
+```
 
 Barcha serializerlarda `center` — `read_only`. FK maydonlar (`course`, `branch`,
 `room`, `teacher`, `student`) markazga tegishliligi tekshiriladi: begona obyekt
@@ -514,7 +526,7 @@ Prompt talab qilgan 22 ta holat:
 | 21 | Limitdan oshsa qo'shiladi + `warning` | `study_groups/tests.py::test_21_over_limit_adds_with_warning` |
 | 22 | Generatsiya idempotent | `lessons/tests.py::test_22_generation_is_idempotent` |
 
-Jami **68 ta test** (0-bosqichdan 26 + 1-bosqichdan 42).
+Jami **97 ta test** (0-bosqich 26 + 1-bosqich 43 + kod tekshiruvidan keyin 28).
 
 ---
 
@@ -525,3 +537,57 @@ Bazada tayyor: `Bilim Ziyo o'quv markazi` ichida 1 kurs (Ingliz tili, 6 oy),
 5 o'quvchi va generatsiya qilingan **51 dars** — bayram kuni o'tkazib yuborilgan.
 
 Kirish ma'lumotlari `DEMO_LOGIN.txt` faylida (`.gitignore` da).
+
+---
+
+## 17. Rol huquqlari
+
+0-bosqichda rol darajasidagi huquqlar ataylab yo'q edi. Kod tekshiruvi
+ko'rsatdiki bu shunchaki "nozik huquq" emas, balki **huquq oshirish teshigi**:
+o'qituvchi `PATCH /api/memberships/<o'zi>/ {"role": "OWNER"}` yuborib egaga
+aylana olardi. Endi har bir viewset rolga bog'langan.
+
+| Amal | OWNER | ADMIN | ACCOUNTANT | TEACHER |
+|---|:-:|:-:|:-:|:-:|
+| Xodimlarni ko'rish va boshqarish (`/memberships/`) | ✅ | ✅ | ❌ | ❌ |
+| Filial, kurs, xona, bayram, o'quvchi yaratish/tahrirlash | ✅ | ✅ | ❌ | ❌ |
+| Guruh yaratish, faollashtirish, bekor qilish, jadval | ✅ | ✅ | ❌ | ❌ |
+| Guruhga o'quvchi qo'shish / chiqarish | ✅ | ✅ | ❌ | ❌ |
+| Darsni ko'chirish (`/move/`) | ✅ | ✅ | ❌ | ❌ |
+| Davomat qo'yish va mavzu yozish | ✅ | ✅ | ❌ | faqat o'z darsida |
+| Ro'yxatlarni o'qish (guruh, dars, o'quvchi, kurs…) | ✅ | ✅ | ✅ | ✅ |
+
+Qoidalar `apps/common/permissions.py` dagi `HasCenterRole` da:
+
+- `write_roles` — yozish uchun rollar (standart: OWNER, ADMIN)
+- `read_roles` — o'qish uchun rollar (`None` = har qanday faol a'zo)
+- `action_roles` — alohida `@action` uchun rollar
+- `teacher_field` — obyekt darajasida tekshiruv: TEACHER faqat `lesson.teacher`
+  o'zi bo'lgan darsni o'zgartira oladi
+
+Qo'shimcha qoida: **hech kim o'zining rolini yoki holatini o'zgartira olmaydi** —
+ADMIN ham o'zini OWNER qila olmaydi.
+
+---
+
+## 18. Xavfsizlik
+
+| Chora | Holati |
+|---|---|
+| Tenant ajratish | `X-Center-Id`, begona obyekt → 404, `center` serverda o'rnatiladi |
+| Rol huquqlari | `HasCenterRole`, obyekt darajasida ham |
+| SUSPENDED markaz | ishlamaydi → 403 |
+| Audit o'zgarmasligi | `save`, `delete`, `QuerySet.update`, `bulk_update` — hammasi yopiq |
+| Login brute-force | `10/min` tezlik cheklovi (`ScopedRateThrottle`) |
+| Token muddati | access 1 soat, refresh 7 kun, yangilashda eski refresh qora ro'yxatga |
+| Parol validatorlari | Django'ning 4 ta standart validatori yoqilgan |
+| HTTPS | `SECURE_HTTPS=True` → HSTS + SSL redirect + secure cookie |
+| Sahifalash | `PAGE_SIZE=50` — bitta javobda minglab yozuv kelmaydi |
+
+Hali qilinmagan (keyingi bosqichlarda ko'rib chiqiladi):
+
+- **Logout endpointi yo'q** — qora ro'yxat mexanizmi yoqilgan, lekin foydalanuvchi
+  o'z tokenini bekor qiladigan endpoint hali qo'shilmagan
+- `Group.status = FINISHED` faqat Django admin orqali qo'yiladi
+- Bayramni **o'chirish** darslarni qaytarmaydi (sanasini o'zgartirish qaytaradi);
+  o'chirgandan keyin guruhni qayta `/activate/` qilish kerak

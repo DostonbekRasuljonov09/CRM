@@ -3,19 +3,22 @@
 from rest_framework import mixins, viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from apps.common.permissions import IsCenterMember
+from apps.common.permissions import HasCenterRole, IsCenterMember
 from apps.common.tenant import resolve_center
+
+BASE_PERMISSIONS = [IsAuthenticated, IsCenterMember, HasCenterRole]
 
 
 class CenterMixin:
-    """request.center ni aniqlab qo'yadi (autentifikatsiyadan keyin)."""
+    """request.center va request.membership ni aniqlab qo'yadi."""
 
     def initial(self, request, *args, **kwargs):
-        # Avval foydalanuvchini aniqlaymiz, keyin markazni
+        # Avval foydalanuvchini aniqlaymiz, keyin markaz va a'zolikni
         self.perform_authentication(request)
         request.center = None
+        request.membership = None
         if request.user and request.user.is_authenticated:
-            request.center = resolve_center(request)
+            request.center, request.membership = resolve_center(request)
         super().initial(request, *args, **kwargs)
 
 
@@ -38,7 +41,7 @@ class TenantQuerySetMixin:
 class TenantViewSet(CenterMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
     """To'liq CRUD (DELETE'siz): o'chirish o'rniga status o'zgartiriladi."""
 
-    permission_classes = [IsAuthenticated, IsCenterMember]
+    permission_classes = BASE_PERMISSIONS
     http_method_names = ["get", "post", "patch", "head", "options"]
 
 
@@ -56,5 +59,5 @@ class TenantReadUpdateViewSet(
     POST qilinsa 405 qaytadi.
     """
 
-    permission_classes = [IsAuthenticated, IsCenterMember]
+    permission_classes = BASE_PERMISSIONS
     http_method_names = ["get", "post", "patch", "head", "options"]

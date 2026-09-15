@@ -1,5 +1,6 @@
 """Autentifikatsiya va a'zolik testlari."""
 
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
@@ -154,3 +155,26 @@ class MembershipApiBranchValidationTest(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         membership = Membership.objects.get(user=xodim)
         self.assertEqual([b.name for b in membership.branches.all()], ["A filial"])
+
+
+class LoginThrottleTest(TestCase):
+    """Login endpointi brute-force'dan himoyalangan (10/min)."""
+
+    def setUp(self):
+        cache.clear()
+        self.user = make_user("throttle@a.uz", "+998900000055")
+
+    def test_login_is_throttled_after_repeated_attempts(self):
+        kodlar = []
+        for _ in range(12):
+            response = self.client.post(
+                "/api/auth/login/",
+                {"email": "throttle@a.uz", "password": "notogri"},
+                content_type="application/json",
+            )
+            kodlar.append(response.status_code)
+
+        self.assertIn(401, kodlar, f"kodlar: {kodlar}")
+        self.assertIn(429, kodlar, f"Cheklov ishlamadi, kodlar: {kodlar}")
+        # Cheklovdan keyin to'g'ri parol ham o'tmaydi
+        self.assertEqual(kodlar[-1], 429)

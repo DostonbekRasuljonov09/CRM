@@ -2,6 +2,7 @@
 
 from rest_framework import serializers
 
+from apps.common.serializers import ValidatedModelSerializer
 from apps.centers.models import Branch, Center
 
 
@@ -14,8 +15,12 @@ class CenterShortSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class BranchSerializer(serializers.ModelSerializer):
-    """Filial. center faqat o'qish uchun - u serverda o'rnatiladi."""
+class BranchSerializer(ValidatedModelSerializer):
+    """Filial. center faqat o'qish uchun - u serverda o'rnatiladi.
+
+    ValidatedModelSerializer full_clean() ni chaqiradi: takroriy nom
+    (center, name) 500 emas, 400 qaytaradi.
+    """
 
     class Meta:
         model = Branch

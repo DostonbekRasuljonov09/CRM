@@ -108,15 +108,19 @@ def generate_lessons(group, today=None):
     # Faqat kelajakdagi PLANNED darslar o'chiriladi.
     # Ko'chirish natijasida paydo bo'lgan darslar saqlanadi - aks holda
     # move_lesson tarixi (moved_to) uzilib qolardi.
-    o_chiriladigan = list(
-        Lesson.objects.filter(
-            group=group,
-            status=Lesson.Status.PLANNED,
-            date__gte=boshlanish,
-            moved_from__isnull=True,
-        ).values_list("pk", flat=True)
+    o_chirilayotgan = Lesson.objects.filter(
+        group=group,
+        status=Lesson.Status.PLANNED,
+        date__gte=boshlanish,
+        moved_from__isnull=True,
     )
-    Lesson.objects.filter(pk__in=o_chiriladigan).delete()
+    # Mavzu qo'lda yozilgan ma'lumot - qayta yaratishda yo'qolmasligi kerak
+    eski_mavzular = {
+        (sana, vaqt): mavzu
+        for sana, vaqt, mavzu in o_chirilayotgan.values_list("date", "start_time", "topic")
+        if mavzu
+    }
+    Lesson.objects.filter(pk__in=list(o_chirilayotgan.values_list("pk", flat=True))).delete()
 
     # O'chirilmagan darslar (HELD, CANCELLED, MOVED, ko'chirilgan dars) egallagan
     # o'rinlar ustiga yangi dars yaratilmaydi.
@@ -148,6 +152,7 @@ def generate_lessons(group, today=None):
                         room=schedule.room,
                         teacher=group.teacher,
                         status=Lesson.Status.PLANNED,
+                        topic=eski_mavzular.get((day, schedule.start_time), ""),
                     )
                 )
         day += timedelta(days=1)
@@ -291,3 +296,41 @@ def mark_attendance(lesson, items, membership, ip_address=None):
         lesson.save(update_fields=["status", "updated_at"])
 
     return natija
+
+
+@transaction.atomic
+def apply_holiday(holiday, today=None):
+    """
+    Bayram qo'shilgandan keyin shu sanadagi kelajakdagi PLANNED darslarni olib tashlaydi.
+
+    Generatsiya bayramni o'tkazib yuboradi, lekin guruh allaqachon faol bo'lsa
+    hech narsa qayta generatsiya qilinmaydi - shuning uchun buni ochiq chaqiramiz.
+    Ko'chirish natijasida paydo bo'lgan darslarga tegilmaydi.
+    """
+    today = today or timezone.localdate()
+    if holiday.date < today:
+        return 0
+    pklar = list(
+        Lesson.objects.filter(
+            center_id=holiday.center_id,
+            date=holiday.date,
+            status=Lesson.Status.PLANNED,
+            moved_from__isnull=True,
+        ).values_list("pk", flat=True)
+    )
+    Lesson.objects.filter(pk__in=pklar).delete()
+    return len(pklar)
+
+
+@transaction.atomic
+def regenerate_for_date(center, on_date):
+    """Shu sanani o'z ichiga olgan faol guruhlarning darslarini qayta yaratadi."""
+    guruhlar = Group.objects.filter(
+        center=center,
+        status=Group.Status.ACTIVE,
+        start_date__lte=on_date,
+        end_date__gte=on_date,
+    )
+    for group in guruhlar:
+        generate_lessons(group)
+    return guruhlar.count()

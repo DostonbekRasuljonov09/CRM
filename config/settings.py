@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "apps.common",
     "apps.accounts",
     "apps.centers",
@@ -132,11 +133,20 @@ REST_FRAMEWORK = {
     ),
     # services.py dagi Django ValidationError -> 400
     "EXCEPTION_HANDLER": "apps.common.exceptions.crm_exception_handler",
+    # Ro'yxatlar sahifalanadi: /api/lessons/ bir markazda minglab yozuv bo'ladi
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,
+    # Login'ni brute-force qilishga qarshi
+    "DEFAULT_THROTTLE_RATES": {"login": "10/min"},
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=8),
+    # Qisqa muddat: o'g'irlangan token uzoq ishlamasin
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Yangilashda eski refresh token qora ro'yxatga tushadi
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 
@@ -156,8 +166,19 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # --- Xavfsizlik (DEBUG=False bo'lganda) ---
 
+# HTTPS orqali ishlaganda .env da SECURE_HTTPS=True qiling
+SECURE_HTTPS = env_bool("SECURE_HTTPS", False)
+
 if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    SESSION_COOKIE_SECURE = env_bool("SECURE_COOKIES", False)
-    CSRF_COOKIE_SECURE = env_bool("SECURE_COOKIES", False)
     X_FRAME_OPTIONS = "DENY"
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SECURE = SECURE_HTTPS
+    CSRF_COOKIE_SECURE = SECURE_HTTPS
+    SECURE_SSL_REDIRECT = SECURE_HTTPS
+
+    if SECURE_HTTPS:
+        SECURE_HSTS_SECONDS = 31536000  # 1 yil
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+        SECURE_HSTS_PRELOAD = True
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

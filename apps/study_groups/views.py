@@ -19,6 +19,7 @@ from apps.study_groups.services import (
     activate_group,
     add_student,
     apply_schedule_change,
+    cancel_group,
     leave_group,
     sync_teacher,
 )
@@ -35,10 +36,12 @@ class GroupViewSet(TenantViewSet):
 
     def perform_update(self, serializer):
         eski_teacher_id = serializer.instance.teacher_id
-        group = serializer.save()
-        # O'qituvchi almashsa - faqat kelajakdagi PLANNED darslar yangilanadi
-        if group.teacher_id != eski_teacher_id:
-            sync_teacher(group)
+        # Guruhni saqlash va darslarni yangilash bitta tranzaksiyada:
+        # ziddiyat chiqsa o'qituvchi ham almashmasligi kerak
+        with transaction.atomic():
+            group = serializer.save()
+            if group.teacher_id != eski_teacher_id:
+                sync_teacher(group)
 
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
@@ -49,6 +52,18 @@ class GroupViewSet(TenantViewSet):
             {
                 "group": self.get_serializer(group).data,
                 "lessons_created": len(lessons),
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Guruhni bekor qiladi va kelajakdagi darslarni ham CANCELLED qiladi."""
+        group = self.get_object()
+        bekor_qilingan = cancel_group(group)
+        return Response(
+            {
+                "group": self.get_serializer(group).data,
+                "lessons_cancelled": bekor_qilingan,
             }
         )
 

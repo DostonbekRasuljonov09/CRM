@@ -49,7 +49,7 @@ class TenantIsolationTest(TestCase):
             "/api/branches/", headers=auth_headers(self.token_a, self.center_a)
         )
         self.assertEqual(response.status_code, 200)
-        ids = [row["id"] for row in response.json()]
+        ids = [row["id"] for row in response.json()["results"]]
         self.assertEqual(ids, [str(self.branch_a.id)])
 
     def test_03_multiple_memberships_without_header_returns_400(self):
@@ -73,7 +73,7 @@ class TenantIsolationTest(TestCase):
             "/api/branches/", headers={"Authorization": f"Bearer {self.token_a}"}
         )
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()["count"], 1)
 
     def test_05_inactive_membership_returns_403(self):
         """5-test: INACTIVE a'zolik bilan so'rov - 403."""
@@ -119,7 +119,7 @@ class TenantIsolationTest(TestCase):
         )
         self.assertEqual(response_a.status_code, 200, response_a.content)
         self.assertEqual(
-            [row["id"] for row in response_a.json()], [str(self.branch_a.id)]
+            [row["id"] for row in response_a.json()["results"]], [str(self.branch_a.id)]
         )
 
         response_b = self.client.get(
@@ -127,7 +127,7 @@ class TenantIsolationTest(TestCase):
         )
         self.assertEqual(response_b.status_code, 200, response_b.content)
         self.assertEqual(
-            [row["id"] for row in response_b.json()], [str(self.branch_b.id)]
+            [row["id"] for row in response_b.json()["results"]], [str(self.branch_b.id)]
         )
 
         me = self.client.get(

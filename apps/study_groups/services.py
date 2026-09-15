@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.lessons.models import Lesson
-from apps.lessons.services import generate_lessons
+from apps.lessons.services import ensure_no_conflicts, generate_lessons
 from apps.study_groups.models import Group, GroupStudent
 
 
@@ -30,17 +30,53 @@ def apply_schedule_change(group):
     return []
 
 
+@transaction.atomic
 def sync_teacher(group, today=None):
     """
     O'qituvchi almashganda faqat kelajakdagi PLANNED darslarni yangilaydi.
 
     HELD, CANCELLED, MOVED va o'tgan darslarga tegilmaydi - 3-bosqichda
     maosh o'sha yozuvlardan hisoblanadi.
+
+    Yangi o'qituvchining jadvali bo'sh bo'lishi shart: aks holda bitta odam
+    bir vaqtda ikki joyda dars berib qolardi. Ziddiyat topilsa butun amal
+    bekor bo'ladi va o'qituvchi almashmaydi.
     """
     today = today or timezone.localdate()
+    lessons = list(
+        Lesson.objects.filter(
+            group=group, status=Lesson.Status.PLANNED, date__gte=today
+        )
+    )
+    if not lessons:
+        return 0
+
+    Lesson.objects.filter(pk__in=[lesson.pk for lesson in lessons]).update(
+        teacher=group.teacher
+    )
+
+    for lesson in lessons:
+        lesson.teacher = group.teacher
+        ensure_no_conflicts(lesson)
+
+    return len(lessons)
+
+
+@transaction.atomic
+def cancel_group(group, today=None):
+    """
+    Guruhni bekor qiladi va kelajakdagi PLANNED darslarni CANCELLED qiladi.
+
+    Aks holda bekor qilingan guruhning darslari xona va o'qituvchini
+    band qilib turardi.
+    """
+    today = today or timezone.localdate()
+    group.status = Group.Status.CANCELLED
+    group.full_clean()
+    group.save()
     return Lesson.objects.filter(
         group=group, status=Lesson.Status.PLANNED, date__gte=today
-    ).update(teacher=group.teacher)
+    ).update(status=Lesson.Status.CANCELLED)
 
 
 @transaction.atomic

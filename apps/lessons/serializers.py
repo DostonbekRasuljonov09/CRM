@@ -59,6 +59,13 @@ class LessonSerializer(TenantModelSerializer):
                 "PATCH orqali darsni faqat CANCELLED holatiga o'tkazish mumkin. "
                 "Ko'chirish uchun /move/ endpointidan foydalaning."
             )
+        # Faqat PLANNED -> CANCELLED. O'tkazilgan darsni bekor qilsak,
+        # davomat yozuvlari egasiz qolib 3-bosqichdagi maosh hisobini buzadi.
+        if self.instance is not None and self.instance.status != Lesson.Status.PLANNED:
+            raise serializers.ValidationError(
+                "Faqat rejalashtirilgan darsni bekor qilish mumkin. "
+                f"Bu darsning holati: {self.instance.get_status_display()}."
+            )
         return value
 
 

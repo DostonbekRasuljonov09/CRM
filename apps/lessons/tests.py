@@ -229,12 +229,12 @@ class LessonGenerationTest(TenantApiTestCase):
         self.activate()
         hammasi = self.api("get", "/api/lessons/")
         self.assertEqual(hammasi.status_code, 200)
-        self.assertEqual(len(hammasi.json()), 4)
+        self.assertEqual(hammasi.json()["count"], 4)
 
         filtrlangan = self.api(
             "get", f"/api/lessons/?group={self.group.id}&date_from={self.start + timedelta(days=7)}"
         )
-        self.assertEqual(len(filtrlangan.json()), 2)
+        self.assertEqual(filtrlangan.json()["count"], 2)
 
     def test_20c_lesson_cannot_be_created_via_api(self):
         """Darslar faqat generatsiya orqali paydo bo'ladi."""
