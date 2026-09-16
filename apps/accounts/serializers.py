@@ -37,6 +37,13 @@ class MembershipSerializer(TenantModelSerializer):
         ]
         read_only_fields = ["id", "center", "created_at", "updated_at"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # `user` yaratilgandan keyin o'zgarmaydi: aks holda ADMIN OWNER
+        # qatorining egasini o'ziga almashtirib qo'ya olardi
+        if self.instance is not None:
+            self.fields["user"].read_only = True
+
     def validate_branches(self, value):
         """Filiallar shu markazga tegishli bo'lishi shart."""
         center = getattr(self.context.get("request"), "center", None)

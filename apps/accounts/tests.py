@@ -5,8 +5,10 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from apps.accounts.models import Membership
+from apps.accounts.services import guard_last_owner
 from apps.common.sample_data import (
     PAROL,
+    TenantApiTestCase,
     auth_headers,
     get_token,
     make_branch,
@@ -178,3 +180,181 @@ class LoginThrottleTest(TestCase):
         self.assertIn(429, kodlar, f"Cheklov ishlamadi, kodlar: {kodlar}")
         # Cheklovdan keyin to'g'ri parol ham o'tmaydi
         self.assertEqual(kodlar[-1], 429)
+
+
+class MembershipRoleHierarchyTest(TenantApiTestCase):
+    """1-muammo: ADMIN OWNER huquqini egallab olardi.
+
+    Rol ierarxiyasi: OWNER barcha rollarni boshqaradi, ADMIN faqat
+    TEACHER va ACCOUNTANT ni.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.owner_user = make_user("owner@a.uz", "+998900000001")
+        self.owner = make_membership(
+            self.owner_user, self.center, role=Membership.Role.OWNER
+        )
+        self.admin = Membership.objects.get(user=self.admin_user, center=self.center)
+        self.owner_headers = auth_headers(
+            get_token(self.client, "owner@a.uz"), self.center
+        )
+
+    def as_owner(self, method, url, data=None):
+        kwargs = {"headers": self.owner_headers}
+        if data is not None:
+            kwargs["data"] = data
+            kwargs["content_type"] = "application/json"
+        return getattr(self.client, method)(url, **kwargs)
+
+    # --- (a) ADMIN o'ziga OWNER a'zoligi yaratadi ---
+    def test_i1a_admin_cannot_create_owner_membership(self):
+        response = self.api(
+            "post",
+            "/api/memberships/",
+            {"user": str(self.admin_user.id), "role": "OWNER", "started_at": "2026-01-01"},
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertFalse(
+            Membership.objects.filter(
+                user=self.admin_user, center=self.center, role=Membership.Role.OWNER
+            ).exists()
+        )
+
+    # --- (b) ADMIN OWNER'ni faolsizlantiradi ---
+    def test_i1b_admin_cannot_deactivate_owner(self):
+        response = self.api("patch", f"/api/memberships/{self.owner.id}/", {"status": "INACTIVE"})
+        self.assertEqual(response.status_code, 403, response.content)
+
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.status, Membership.Status.ACTIVE)
+        # OWNER hali ham ishlay oladi
+        self.assertEqual(self.as_owner("get", "/api/branches/").status_code, 200)
+
+    # --- (c) ADMIN OWNER a'zoligini o'ziga o'tkazadi ---
+    def test_i1c_admin_cannot_reassign_owner_membership(self):
+        response = self.api(
+            "patch", f"/api/memberships/{self.owner.id}/", {"user": str(self.admin_user.id)}
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.user_id, self.owner_user.id)
+
+    def test_i1d_admin_cannot_create_or_promote_admin(self):
+        boshqa = make_user("yangi@a.uz", "+998900000078")
+
+        yaratish = self.api(
+            "post",
+            "/api/memberships/",
+            {"user": str(boshqa.id), "role": "ADMIN", "started_at": "2026-01-01"},
+        )
+        self.assertEqual(yaratish.status_code, 403, yaratish.content)
+
+        # TEACHER ni ADMIN ga ko'tarish ham yopiq
+        oqituvchi = make_membership(boshqa, self.center, role=Membership.Role.TEACHER)
+        kotarish = self.api("patch", f"/api/memberships/{oqituvchi.id}/", {"role": "ADMIN"})
+        self.assertEqual(kotarish.status_code, 403, kotarish.content)
+
+        oqituvchi.refresh_from_db()
+        self.assertEqual(oqituvchi.role, Membership.Role.TEACHER)
+
+    def test_i1e_admin_cannot_touch_another_admin(self):
+        boshqa = make_user("admin2@a.uz", "+998900000079")
+        boshqa_admin = make_membership(boshqa, self.center, role=Membership.Role.ADMIN)
+
+        response = self.api(
+            "patch", f"/api/memberships/{boshqa_admin.id}/", {"status": "INACTIVE"}
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        boshqa_admin.refresh_from_db()
+        self.assertEqual(boshqa_admin.status, Membership.Status.ACTIVE)
+
+    def test_i1f_admin_can_manage_teacher_and_accountant(self):
+        for index, rol in enumerate(("TEACHER", "ACCOUNTANT")):
+            xodim = make_user(f"xodim{index}@a.uz", f"+99890000008{index}")
+            response = self.api(
+                "post",
+                "/api/memberships/",
+                {"user": str(xodim.id), "role": rol, "started_at": "2026-01-01"},
+            )
+            self.assertEqual(response.status_code, 201, f"{rol}: {response.content}")
+
+    def test_i1g_owner_can_add_another_owner(self):
+        boshqa = make_user("owner2@a.uz", "+998900000002")
+        response = self.as_owner(
+            "post",
+            "/api/memberships/",
+            {"user": str(boshqa.id), "role": "OWNER", "started_at": "2026-01-01"},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(
+            Membership.objects.filter(
+                user=boshqa, center=self.center, role=Membership.Role.OWNER
+            ).exists()
+        )
+
+    def test_i1h_owner_can_demote_another_owner_but_not_the_last(self):
+        boshqa = make_user("owner2@a.uz", "+998900000002")
+        ikkinchi = make_membership(boshqa, self.center, role=Membership.Role.OWNER)
+
+        # Ikkita OWNER bor - birini tushirish mumkin
+        tushirish = self.as_owner(
+            "patch", f"/api/memberships/{ikkinchi.id}/", {"role": "ADMIN"}
+        )
+        self.assertEqual(tushirish.status_code, 200, tushirish.content)
+
+        # Endi bitta OWNER qoldi va uni hech kim faolsizlantira olmaydi
+        ozini = self.as_owner(
+            "patch", f"/api/memberships/{self.owner.id}/", {"status": "INACTIVE"}
+        )
+        self.assertEqual(ozini.status_code, 403, ozini.content)
+        self.assertEqual(
+            Membership.objects.filter(
+                center=self.center,
+                role=Membership.Role.OWNER,
+                status=Membership.Status.ACTIVE,
+            ).count(),
+            1,
+        )
+
+
+class LastOwnerGuardTest(TestCase):
+    """`guard_last_owner` qoidasi - himoyaning ikkinchi qatlami.
+
+    API orqali bu holatga tushib bo'lmaydi (o'z qatoriga tegish va
+    ierarxiya to'sadi), shuning uchun qoida to'g'ridan-to'g'ri sinaladi.
+    """
+
+    def setUp(self):
+        self.center = make_center("A markaz", "a-markaz")
+        self.owner = make_membership(
+            make_user("owner@a.uz", "+998900000001"),
+            self.center,
+            role=Membership.Role.OWNER,
+        )
+
+    def test_last_active_owner_cannot_be_deactivated(self):
+        with self.assertRaises(ValidationError):
+            guard_last_owner(self.owner, yangi_status=Membership.Status.INACTIVE)
+
+    def test_last_active_owner_cannot_be_demoted(self):
+        with self.assertRaises(ValidationError):
+            guard_last_owner(self.owner, yangi_role=Membership.Role.ADMIN)
+
+    def test_owner_can_be_demoted_when_another_owner_stays(self):
+        make_membership(
+            make_user("owner2@a.uz", "+998900000002"),
+            self.center,
+            role=Membership.Role.OWNER,
+        )
+        # Xato ko'tarilmasligi kerak
+        guard_last_owner(self.owner, yangi_role=Membership.Role.ADMIN)
+
+    def test_non_owner_rows_are_not_guarded(self):
+        oqituvchi = make_membership(
+            make_user("teacher@a.uz", "+998900000003"),
+            self.center,
+            role=Membership.Role.TEACHER,
+        )
+        guard_last_owner(oqituvchi, yangi_status=Membership.Status.INACTIVE)

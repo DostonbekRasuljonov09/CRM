@@ -75,13 +75,20 @@ class AuditWriteTest(TestCase):
         self.assertIsNone(log.old_values)
 
     def test_08d_membership_role_change_is_logged(self):
+        """Rol o'zgarishi auditga tushadi.
+
+        Avval bu test TEACHER -> ADMIN o'tishini tekshirardi. Rol ierarxiyasi
+        qo'shilgandan keyin ADMIN boshqa ADMIN yaratolmaydi (403), shuning
+        uchun ADMIN uchun ruxsat etilgan o'tish olindi: TEACHER -> ACCOUNTANT.
+        Testning maqsadi o'zgarmadi.
+        """
         xodim = make_user("oqituvchi@crm.uz", "+998933333333")
         membership = make_membership(
             xodim, self.center, role="TEACHER"
         )
         response = self.client.patch(
             f"/api/memberships/{membership.id}/",
-            {"role": "ADMIN"},
+            {"role": "ACCOUNTANT"},
             content_type="application/json",
             headers=auth_headers(self.token, self.center),
         )
@@ -91,7 +98,7 @@ class AuditWriteTest(TestCase):
         )
         self.assertEqual(log.object_type, "accounts.Membership")
         self.assertEqual(log.old_values, {"role": "TEACHER"})
-        self.assertEqual(log.new_values, {"role": "ADMIN"})
+        self.assertEqual(log.new_values, {"role": "ACCOUNTANT"})
 
 
     def test_08e_date_field_is_stored_as_text(self):

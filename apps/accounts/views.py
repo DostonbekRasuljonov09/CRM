@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.accounts.models import Membership, User
 from apps.accounts.serializers import MeSerializer, MembershipSerializer
+from apps.accounts.services import guard_last_owner, guard_role_hierarchy
 from apps.audit.models import AuditLog
 from apps.audit.services import log_action
 from apps.common.utils import client_ip, diff_values, model_snapshot
@@ -53,7 +54,17 @@ class MembershipViewSet(TenantViewSet):
     read_roles = ("OWNER", "ADMIN")
     write_roles = ("OWNER", "ADMIN")
 
+    def _actor_roles(self):
+        """Ijrochining shu markazdagi barcha faol rollari."""
+        memberships = getattr(self.request, "memberships", None) or [
+            self.request.membership
+        ]
+        return {membership.role for membership in memberships}
+
     def perform_create(self, serializer):
+        guard_role_hierarchy(
+            self._actor_roles(), yangi_role=serializer.validated_data.get("role")
+        )
         super().perform_create(serializer)
         instance = serializer.instance
         log_action(
@@ -73,6 +84,13 @@ class MembershipViewSet(TenantViewSet):
                 raise PermissionDenied(
                     "O'zingizning rolingiz yoki holatingizni o'zgartira olmaysiz."
                 )
+
+        yangi_role = serializer.validated_data.get("role")
+        guard_role_hierarchy(self._actor_roles(), serializer.instance.role, yangi_role)
+        guard_last_owner(
+            serializer.instance, yangi_role, serializer.validated_data.get("status")
+        )
+
         before = model_snapshot(serializer.instance, MEMBERSHIP_AUDIT_FIELDS)
         instance = serializer.save()
         after = model_snapshot(instance, MEMBERSHIP_AUDIT_FIELDS)
