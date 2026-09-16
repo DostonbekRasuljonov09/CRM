@@ -54,8 +54,21 @@ class LessonViewSet(TenantReadUpdateViewSet):
             queryset = queryset.filter(date__lte=params["date_to"])
         return queryset
 
-    def _joriy_membership(self):
-        """So'rov aniqlagan a'zolik (resolve_center o'rnatib qo'ygan)."""
+    def _joriy_membership(self, lesson=None):
+        """
+        Amalni bajarayotgan a'zolik.
+
+        Bir odam bir markazda bir nechta rolda bo'lishi mumkin. Agar dars
+        aynan uning a'zoliklaridan biriga biriktirilgan bo'lsa, davomat
+        o'sha a'zolik nomidan yoziladi - shunda `marked_by` to'g'ri bo'ladi
+        (ACCOUNTANT emas, TEACHER).
+        """
+        memberships = getattr(self.request, "memberships", None) or []
+        if lesson is not None:
+            for membership in memberships:
+                if membership.id == lesson.teacher_id:
+                    return membership
+
         membership = getattr(self.request, "membership", None)
         if membership is None:
             raise DRFValidationError("Sizda bu markazda faol a'zolik yo'q.")
@@ -101,7 +114,7 @@ class LessonViewSet(TenantReadUpdateViewSet):
         natija = mark_attendance(
             lesson,
             kirish.validated_data["items"],
-            self._joriy_membership(),
+            self._joriy_membership(lesson),
             ip_address=client_ip(request),
         )
         lesson.refresh_from_db()

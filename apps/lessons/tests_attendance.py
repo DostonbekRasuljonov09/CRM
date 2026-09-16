@@ -4,13 +4,18 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from apps.accounts.models import Membership
 from apps.audit.models import AuditLog
 from apps.common.sample_data import (
     TenantApiTestCase,
+    auth_headers,
+    get_token,
     make_enrollment,
     make_group,
+    make_membership,
     make_student,
     make_teacher,
+    make_user,
 )
 from apps.lessons.models import Attendance, Lesson
 
@@ -242,3 +247,87 @@ class MoveLessonTest(AttendanceBaseTest):
 
         self.lesson_future.refresh_from_db()
         self.assertEqual(self.lesson_future.status, Lesson.Status.PLANNED)
+
+
+class MultiRoleAttendanceTest(AttendanceBaseTest):
+    """3-muammo: bir markazda bir nechta rol bo'lsa TEACHER huquqi yo'qolardi.
+
+    `pick_membership` faqat "eng kuchli" rolni olardi va ACCOUNTANT'ni
+    TEACHER'dan kuchli deb hisoblardi. Lekin bu rollar bir-birining ichida
+    emas - huquqlari har xil.
+    """
+
+    def headers_for(self, email):
+        return auth_headers(get_token(self.client, email), self.center)
+
+    def post_attendance(self, lesson, headers, student=None):
+        return self.client.post(
+            f"/api/lessons/{lesson.id}/attendance/",
+            {"items": [{"student": str((student or self.student).id), "status": "PRESENT"}]},
+            content_type="application/json",
+            headers=headers,
+        )
+
+    def boshqa_oqituvchi_darsi(self):
+        """Boshqa o'qituvchiga biriktirilgan dars (shu o'quvchi bilan)."""
+        boshqa = make_teacher(self.center, "t2@a.uz", "+998900000012")
+        group = make_group(
+            self.center,
+            self.course,
+            self.branch,
+            boshqa,
+            name="BOSHQA-GURUH",
+            start_date=self.today - timedelta(days=20),
+            end_date=self.today + timedelta(days=20),
+        )
+        make_enrollment(group, self.student, joined_at=self.today - timedelta(days=15))
+        return Lesson.objects.create(
+            center=self.center,
+            group=group,
+            date=self.today,
+            start_time="14:00",
+            end_time="15:30",
+            room=self.room,
+            teacher=boshqa,
+        )
+
+    def test_i3a_accountant_and_teacher_marks_own_lesson(self):
+        """ACCOUNTANT + TEACHER o'z darsiga davomat qo'yadi."""
+        make_membership(self.teacher.user, self.center, role=Membership.Role.ACCOUNTANT)
+
+        response = self.post_attendance(self.lesson_today, self.headers_for("teacher@a.uz"))
+        self.assertEqual(response.status_code, 201, response.content)
+
+        # marked_by ga TEACHER a'zoligi yoziladi, ACCOUNTANT emas
+        self.assertEqual(
+            response.json()["attendances"][0]["marked_by"], str(self.teacher.id)
+        )
+
+    def test_i3b_accountant_and_teacher_cannot_mark_another_lesson(self):
+        """Obyekt darajasidagi cheklov saqlanadi."""
+        make_membership(self.teacher.user, self.center, role=Membership.Role.ACCOUNTANT)
+        begona = self.boshqa_oqituvchi_darsi()
+
+        response = self.post_attendance(begona, self.headers_for("teacher@a.uz"))
+        self.assertEqual(response.status_code, 403, response.content)
+
+    def test_i3c_admin_and_teacher_behaviour_is_unchanged(self):
+        """ADMIN + TEACHER: ADMIN huquqi bilan har qanday darsga qo'yadi."""
+        make_membership(self.admin_user, self.center, role=Membership.Role.TEACHER)
+        begona = self.boshqa_oqituvchi_darsi()
+
+        oz = self.post_attendance(self.lesson_today, self.headers)
+        self.assertEqual(oz.status_code, 201, oz.content)
+
+        boshqa = self.post_attendance(begona, self.headers)
+        self.assertEqual(boshqa.status_code, 201, boshqa.content)
+
+    def test_i3d_accountant_alone_cannot_mark_attendance(self):
+        """Faqat ACCOUNTANT bo'lsa davomat qo'yolmaydi."""
+        hisobchi_user = make_user("hisobchi@a.uz", "+998900000033")
+        make_membership(hisobchi_user, self.center, role=Membership.Role.ACCOUNTANT)
+
+        response = self.post_attendance(
+            self.lesson_today, self.headers_for("hisobchi@a.uz")
+        )
+        self.assertEqual(response.status_code, 403, response.content)

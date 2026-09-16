@@ -28,15 +28,24 @@ def active_memberships(user):
     )
 
 
-def pick_membership(memberships, center):
-    """Shu markazdagi eng kuchli rolli a'zolikni qaytaradi."""
-    shu_markaz = [m for m in memberships if m.center_id == center.id]
-    return min(shu_markaz, key=lambda m: ROLE_RANK.get(m.role, 99))
+def center_memberships(memberships, center):
+    """
+    Shu markazdagi barcha a'zoliklar, kuchli roldan boshlab.
+
+    Bitta odam bir markazda bir nechta rolda bo'lishi mumkin (masalan
+    ACCOUNTANT va TEACHER). Bu rollar bir-birining ichida emas - huquqlari
+    har xil, shuning uchun faqat "eng kuchlisini" olish TEACHER huquqini
+    yo'qotib qo'yardi. Ruxsat barcha rollar bo'yicha tekshiriladi.
+    """
+    return sorted(
+        (m for m in memberships if m.center_id == center.id),
+        key=lambda m: ROLE_RANK.get(m.role, 99),
+    )
 
 
 def resolve_center(request):
     """
-    So'rov uchun markazni va foydalanuvchining shu markazdagi a'zoligini aniqlaydi.
+    So'rov uchun markazni va foydalanuvchining shu markazdagi a'zoliklarini aniqlaydi.
 
     1. X-Center-Id bor -> shu markazda ACTIVE a'zolik bo'lishi shart, aks holda 403
     2. Sarlavha yo'q, bitta markazda a'zolik bor -> o'sha markaz
@@ -47,7 +56,7 @@ def resolve_center(request):
     hisoblanmaydi - markazlar takrorlanmaydigan qilib sanaladi.
     SUSPENDED markaz a'zolik bermaydi.
 
-    Natija: (center, membership)
+    Natija: (center, memberships) - memberships kuchli roldan boshlab tartiblangan
     """
     memberships = list(active_memberships(request.user))
     header = request.headers.get(CENTER_HEADER)
@@ -59,7 +68,9 @@ def resolve_center(request):
             raise PermissionDenied("X-Center-Id noto'g'ri formatda.")
         for membership in memberships:
             if membership.center_id == center_id:
-                return membership.center, pick_membership(memberships, membership.center)
+                return membership.center, center_memberships(
+                    memberships, membership.center
+                )
         raise PermissionDenied("Siz bu markazda faol emassiz yoki markaz faoliyati to'xtatilgan.")
 
     if not memberships:
@@ -72,6 +83,6 @@ def resolve_center(request):
 
     if len(markazlar) == 1:
         center = next(iter(markazlar.values()))
-        return center, pick_membership(memberships, center)
+        return center, center_memberships(memberships, center)
 
     raise MultipleCentersError(markazlar.values())

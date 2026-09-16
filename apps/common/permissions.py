@@ -5,6 +5,8 @@ from rest_framework.permissions import SAFE_METHODS, BasePermission
 # Yozish amallari uchun standart rollar
 DEFAULT_WRITE_ROLES = ("OWNER", "ADMIN")
 
+TEACHER_ROLE = "TEACHER"
+
 
 class IsCenterMember(BasePermission):
     """Foydalanuvchining request.center bo'yicha ACTIVE a'zoligi borligini tekshiradi."""
@@ -39,22 +41,46 @@ class HasCenterRole(BasePermission):
             return getattr(view, "read_roles", None)
         return getattr(view, "write_roles", DEFAULT_WRITE_ROLES)
 
+    def _memberships(self, request):
+        return getattr(request, "memberships", None) or []
+
     def has_permission(self, request, view):
-        membership = getattr(request, "membership", None)
-        if membership is None:
+        """Rollardan birortasi yetsa ruxsat beriladi.
+
+        Bir odam bir markazda bir nechta rolda bo'lishi mumkin (ACCOUNTANT
+        va TEACHER kabi) - bu rollar bir-birining ichida emas.
+        """
+        memberships = self._memberships(request)
+        if not memberships:
             return False
         roles = self._allowed_roles(request, view)
-        return roles is None or membership.role in roles
+        if roles is None:
+            return True
+        return any(membership.role in roles for membership in memberships)
 
     def has_object_permission(self, request, view, obj):
-        """O'qituvchi faqat o'zi dars beradigan obyektni o'zgartiradi."""
+        """O'qituvchi faqat o'zi dars beradigan obyektni o'zgartiradi.
+
+        Cheklov faqat ruxsatni TEACHER roli berayotgan bo'lsa qo'llanadi:
+        agar foydalanuvchida OWNER yoki ADMIN roli ham bo'lsa, u har qanday
+        darsda ishlay oladi.
+        """
         if request.method in SAFE_METHODS:
-            return True
-        membership = getattr(request, "membership", None)
-        if membership is None or membership.role != "TEACHER":
             return True
         teacher_field = getattr(view, "teacher_field", None)
         if not teacher_field:
             return True
+
+        memberships = self._memberships(request)
+        roles = self._allowed_roles(request, view)
+        for membership in memberships:
+            if membership.role != TEACHER_ROLE and (
+                roles is None or membership.role in roles
+            ):
+                return True
+
+        oz_azoliklari = {
+            membership.id for membership in memberships if membership.role == TEACHER_ROLE
+        }
         self.message = "Siz faqat o'zingiz dars beradigan guruh bilan ishlashingiz mumkin."
-        return getattr(obj, f"{teacher_field}_id", None) == membership.id
+        return getattr(obj, f"{teacher_field}_id", None) in oz_azoliklari

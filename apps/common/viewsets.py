@@ -10,15 +10,23 @@ BASE_PERMISSIONS = [IsAuthenticated, IsCenterMember, HasCenterRole]
 
 
 class CenterMixin:
-    """request.center va request.membership ni aniqlab qo'yadi."""
+    """
+    request.center, request.memberships va request.membership ni o'rnatadi.
+
+    `memberships` - shu markazdagi BARCHA faol a'zoliklar (bir odam bir
+    markazda bir nechta rolda bo'lishi mumkin). `membership` - eng kuchli
+    rolli a'zolik, audit va standart qiymatlar uchun.
+    """
 
     def initial(self, request, *args, **kwargs):
-        # Avval foydalanuvchini aniqlaymiz, keyin markaz va a'zolikni
+        # Avval foydalanuvchini aniqlaymiz, keyin markaz va a'zoliklarni
         self.perform_authentication(request)
         request.center = None
+        request.memberships = []
         request.membership = None
         if request.user and request.user.is_authenticated:
-            request.center, request.membership = resolve_center(request)
+            request.center, request.memberships = resolve_center(request)
+            request.membership = request.memberships[0]
         super().initial(request, *args, **kwargs)
 
 
