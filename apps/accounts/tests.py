@@ -358,3 +358,37 @@ class LastOwnerGuardTest(TestCase):
             role=Membership.Role.TEACHER,
         )
         guard_last_owner(oqituvchi, yangi_status=Membership.Status.INACTIVE)
+
+
+class LoginThrottleSpoofTest(TestCase):
+    """2-muammo: soxta `X-Forwarded-For` bilan cheklovni aylanib o'tish."""
+
+    def setUp(self):
+        cache.clear()
+        make_user("spoof@a.uz", "+998900000056")
+
+    def urinish(self, headers=None):
+        return self.client.post(
+            "/api/auth/login/",
+            {"email": "spoof@a.uz", "password": "notogri"},
+            content_type="application/json",
+            headers=headers or {},
+        )
+
+    def test_spoofed_forwarded_for_cannot_bypass_throttle(self):
+        kodlar = [
+            self.urinish({"X-Forwarded-For": f"10.0.0.{index + 1}"}).status_code
+            for index in range(15)
+        ]
+        self.assertIn(429, kodlar, f"Soxta IP cheklovni aylanib o'tdi: {kodlar}")
+        self.assertEqual(kodlar[-1], 429, f"kodlar: {kodlar}")
+
+    def test_forwarded_for_chain_is_also_ignored(self):
+        """Bir nechta IP dan iborat zanjir ham cheklovni buzmaydi."""
+        kodlar = [
+            self.urinish(
+                {"X-Forwarded-For": f"10.0.0.{index + 1}, 172.16.0.{index + 1}"}
+            ).status_code
+            for index in range(15)
+        ]
+        self.assertIn(429, kodlar, f"Zanjir cheklovni aylanib o'tdi: {kodlar}")

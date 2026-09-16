@@ -578,11 +578,37 @@ ADMIN ham o'zini OWNER qila olmaydi.
 | Rol huquqlari | `HasCenterRole`, obyekt darajasida ham |
 | SUSPENDED markaz | ishlamaydi → 403 |
 | Audit o'zgarmasligi | `save`, `delete`, `QuerySet.update`, `bulk_update` — hammasi yopiq |
-| Login brute-force | `10/min` tezlik cheklovi (`ScopedRateThrottle`) |
+| Login brute-force | `10/min` tezlik cheklovi (`ScopedRateThrottle`), IP `NUM_PROXIES` bo'yicha aniqlanadi |
 | Token muddati | access 1 soat, refresh 7 kun, yangilashda eski refresh qora ro'yxatga |
 | Parol validatorlari | Django'ning 4 ta standart validatori yoqilgan |
 | HTTPS | `SECURE_HTTPS=True` → HSTS + SSL redirect + secure cookie |
 | Sahifalash | `PAGE_SIZE=50` — bitta javobda minglab yozuv kelmaydi |
+
+### `NUM_PROXIES` — nega muhim
+
+DRF mijoz IP'sini tezlik cheklovi uchun ishlatadi. `NUM_PROXIES` sozlanmagan
+bo'lsa, DRF IP'ni `X-Forwarded-For` sarlavhasidan oladi — mijoz esa bu
+sarlavhani o'zi yozadi. Natijada har safar boshqa soxta IP yuborib
+(`10.0.0.1`, `10.0.0.2`, …) cheklovni cheksiz aylanib o'tish mumkin bo'ladi.
+
+`.env` da:
+
+| Muhit | Qiymat |
+|---|---|
+| Proxy yo'q (lokal, `runserver`, to'g'ridan-to'g'ri gunicorn) | `NUM_PROXIES=0` |
+| Bitta ishonchli proxy ortida (nginx, Caddy) | `NUM_PROXIES=1` |
+| Ikkita (nginx + Cloudflare) | `NUM_PROXIES=2` |
+
+`0` bo'lganda faqat `REMOTE_ADDR` ishlatiladi va soxta sarlavha e'tiborsiz
+qoldiriladi. Qiymatni proxy sonidan **katta** qilib qo'ymang — u holda
+mijozning o'zi yozgan qiymatga qaytib qolasiz.
+
+> **Eslatma — cache va worker'lar.** Tezlik cheklovi Django cache'ida
+> hisoblanadi. Standart `LocMemCache` har bir worker jarayonida **alohida**
+> ishlaydi, ya'ni 4 ta worker bo'lsa cheklov amalda `10/min` emas, har
+> worker'da `10/min` bo'ladi. Haqiqiy umumiy cheklov kerak bo'lsa,
+> umumiy cache (Redis/Memcached) kerak — lekin u yangi paket va
+> infratuzilma talab qiladi, shuning uchun bu bosqichda qo'shilmadi.
 
 Hali qilinmagan (keyingi bosqichlarda ko'rib chiqiladi):
 

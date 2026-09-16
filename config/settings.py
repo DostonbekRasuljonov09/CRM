@@ -24,6 +24,14 @@ def env_bool(name, default=False):
     return raw.strip().lower() in ("1", "true", "yes", "on", "ha")
 
 
+def env_int(name, default):
+    """.env dagi matnni butun songa aylantiradi."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return int(raw.strip())
+
+
 def env_list(name, default=""):
     """Vergul bilan ajratilgan qiymatlarni ro'yxatga aylantiradi."""
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
@@ -138,6 +146,12 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 50,
     # Login'ni brute-force qilishga qarshi
     "DEFAULT_THROTTLE_RATES": {"login": "10/min"},
+    # Mijoz IP'si qaysi manbadan olinadi.
+    # 0  - faqat REMOTE_ADDR (proxy yo'q). Mijoz yuborgan X-Forwarded-For
+    #      e'tiborsiz qoldiriladi, aks holda har safar boshqa soxta IP
+    #      yuborib tezlik cheklovini aylanib o'tish mumkin.
+    # 1  - bitta ishonchli proxy ortida (masalan nginx)
+    "NUM_PROXIES": env_int("NUM_PROXIES", 0),
 }
 
 SIMPLE_JWT = {
