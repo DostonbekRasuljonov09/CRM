@@ -2,6 +2,8 @@
 
 from datetime import date, timedelta
 
+from django.utils import timezone
+
 from apps.accounts.models import Membership
 from apps.common.sample_data import (
     TenantApiTestCase,
@@ -14,6 +16,7 @@ from apps.common.sample_data import (
     make_teacher,
     make_user,
 )
+from apps.lessons.models import Lesson
 from apps.study_groups.models import Group, GroupStudent
 
 
@@ -192,3 +195,55 @@ class EnrollmentTest(TenantApiTestCase):
             ).count(),
             3,
         )
+
+
+class CancelledGroupTest(TenantApiTestCase):
+    """6-muammo: bekor qilingan guruh qayta faollashsa darssiz qolardi.
+
+    `cancel_group` kelajakdagi darslarni CANCELLED qiladi, `generate_lessons`
+    esa band o'rinlarga yangi dars yaratmaydi - natijada guruh ACTIVE bo'lib,
+    lekin birorta darssiz qolardi.
+    """
+
+    def setUp(self):
+        super().setUp()
+        today = timezone.localdate()
+        start = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+
+        from apps.common.sample_data import make_group, make_schedule
+
+        self.group = make_group(
+            self.center,
+            self.course,
+            self.branch,
+            self.teacher,
+            name="ENG-01",
+            start_date=start,
+            end_date=start + timedelta(days=13),
+        )
+        make_schedule(self.group, 0, self.room, "09:00", "10:30")
+        javob = self.api("post", f"/api/groups/{self.group.id}/activate/")
+        self.assertEqual(javob.status_code, 200, javob.content)
+
+    def test_i6_cancelled_group_cannot_be_reactivated(self):
+        bekor = self.api("post", f"/api/groups/{self.group.id}/cancel/")
+        self.assertEqual(bekor.status_code, 200, bekor.content)
+
+        response = self.api("post", f"/api/groups/{self.group.id}/activate/")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("Bekor qilingan", str(response.json()))
+
+        self.group.refresh_from_db()
+        self.assertEqual(self.group.status, Group.Status.CANCELLED)
+        self.assertEqual(
+            Lesson.objects.filter(
+                group=self.group, status=Lesson.Status.PLANNED
+            ).count(),
+            0,
+        )
+
+    def test_i6b_active_group_can_be_regenerated(self):
+        """Faol guruhni qayta faollashtirish avvalgidek ishlaydi (idempotent)."""
+        response = self.api("post", f"/api/groups/{self.group.id}/activate/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["lessons_created"], 2)

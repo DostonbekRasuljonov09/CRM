@@ -16,7 +16,19 @@ def activate_group(group):
 
     Jadvalsiz yoki tugash sanasisiz guruh faollashmaydi - buni
     Group.clean() tekshiradi.
+
+    Bekor qilingan guruh qayta faollashmaydi: cancel_group kelajakdagi
+    darslarni CANCELLED qilib qo'yadi, generate_lessons esa band
+    o'rinlarga yangi dars yaratmaydi - natijada guruh ACTIVE bo'lib,
+    lekin birorta darssiz qolardi. Bekor qilingan guruh o'rniga yangisi
+    ochiladi - shunda eski darslar va davomat tarixi ham buzilmaydi.
     """
+    if group.status == Group.Status.CANCELLED:
+        raise ValidationError(
+            {"status": "Bekor qilingan guruhni qayta faollashtirib bo'lmaydi. "
+                       "Yangi guruh oching."}
+        )
+
     group.status = Group.Status.ACTIVE
     group.full_clean()
     group.save()
