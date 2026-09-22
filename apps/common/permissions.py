@@ -25,7 +25,8 @@ class HasCenterRole(BasePermission):
       - `write_roles`  - yozish (POST/PATCH) uchun ruxsat etilgan rollar
                          (standart: OWNER, ADMIN)
       - `read_roles`   - o'qish uchun rollar (None = har qanday faol a'zo)
-      - `action_roles` - alohida @action lar uchun {"action_nomi": (rollar,)}
+      - `action_roles` - alohida @action lar uchun {"action_nomi": (rollar,)};
+                         faqat yozish so'rovlariga qo'llanadi
       - `teacher_field` - TEACHER faqat o'ziga tegishli obyektni o'zgartira oladi
                           (masalan Lesson uchun "teacher")
     """
@@ -33,12 +34,17 @@ class HasCenterRole(BasePermission):
     message = "Bu amal uchun sizning rolingiz yetarli emas."
 
     def _allowed_roles(self, request, view):
+        # O'qish har doim `read_roles` bo'yicha. `action_roles` faqat yozish
+        # so'rovlariga qo'llanadi: aks holda ACCOUNTANT `GET .../attendance/`
+        # da ham 403 olardi, holbuki davomatni ko'rish unga to'lovlar
+        # bosqichida kerak bo'ladi.
+        if request.method in SAFE_METHODS:
+            return getattr(view, "read_roles", None)
+
         action_roles = getattr(view, "action_roles", None) or {}
         action = getattr(view, "action", None)
         if action in action_roles:
             return action_roles[action]
-        if request.method in SAFE_METHODS:
-            return getattr(view, "read_roles", None)
         return getattr(view, "write_roles", DEFAULT_WRITE_ROLES)
 
     def _memberships(self, request):

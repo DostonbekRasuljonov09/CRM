@@ -549,24 +549,66 @@ aylana olardi. Endi har bir viewset rolga bog'langan.
 
 | Amal | OWNER | ADMIN | ACCOUNTANT | TEACHER |
 |---|:-:|:-:|:-:|:-:|
-| Xodimlarni ko'rish va boshqarish (`/memberships/`) | ✅ | ✅ | ❌ | ❌ |
+| Xodimlar ro'yxati (`/memberships/`) | ✅ | ✅ | ❌ | ❌ |
 | Filial, kurs, xona, bayram, o'quvchi yaratish/tahrirlash | ✅ | ✅ | ❌ | ❌ |
 | Guruh yaratish, faollashtirish, bekor qilish, jadval | ✅ | ✅ | ❌ | ❌ |
 | Guruhga o'quvchi qo'shish / chiqarish | ✅ | ✅ | ❌ | ❌ |
-| Darsni ko'chirish (`/move/`) | ✅ | ✅ | ❌ | ❌ |
+| Darsni ko'chirish (`/move/`) va bekor qilish | ✅ | ✅ | ❌ | ❌ |
 | Davomat qo'yish va mavzu yozish | ✅ | ✅ | ❌ | faqat o'z darsida |
+| Davomatni ko'rish | ✅ | ✅ | ✅ | ✅ |
 | Ro'yxatlarni o'qish (guruh, dars, o'quvchi, kurs…) | ✅ | ✅ | ✅ | ✅ |
+
+### Rol ierarxiyasi
+
+A'zolikning o'zini boshqarish alohida qoidaga bo'ysunadi — aks holda ADMIN
+o'ziga OWNER a'zoligi yaratib yoki OWNER qatorini o'ziga o'tkazib markazni
+egallab olardi:
+
+| Kim | Qaysi rollardagi a'zolikni yaratadi va tahrirlaydi |
+|---|---|
+| OWNER | OWNER, ADMIN, TEACHER, ACCOUNTANT |
+| ADMIN | TEACHER, ACCOUNTANT |
+
+ADMIN OWNER yoki ADMIN rolidagi qatorga **umuman tegolmaydi** — hatto faqat
+`started_at` ni o'zgartirmoqchi bo'lsa ham 403. Rolni bu darajalarga ko'tarish
+ham yopiq.
+
+> Oqibati: yangi ADMIN'ni faqat OWNER qo'sha oladi (yoki platforma egasi
+> Django admin orqali). Markazda faol OWNER bo'lmasa, API orqali admin
+> qo'shish yo'li yopiladi.
+
+Yana ikki qoida:
+
+- **Hech kim o'zining rolini yoki holatini o'zgartira olmaydi** — ADMIN ham,
+  OWNER ham
+- **Markazda kamida bitta faol OWNER qolishi shart** (`guard_last_owner`)
+- **`user` maydoni yaratilgandan keyin o'zgarmaydi** — a'zolikni boshqa
+  odamga o'tkazib bo'lmaydi
+
+### Kod qayerda
 
 Qoidalar `apps/common/permissions.py` dagi `HasCenterRole` da:
 
 - `write_roles` — yozish uchun rollar (standart: OWNER, ADMIN)
 - `read_roles` — o'qish uchun rollar (`None` = har qanday faol a'zo)
-- `action_roles` — alohida `@action` uchun rollar
+- `action_roles` — alohida `@action` uchun rollar; **faqat yozish
+  so'rovlariga** qo'llanadi, o'qish har doim `read_roles` bo'yicha
 - `teacher_field` — obyekt darajasida tekshiruv: TEACHER faqat `lesson.teacher`
-  o'zi bo'lgan darsni o'zgartira oladi
+  o'zi bo'lgan darsda ishlay oladi
 
-Qo'shimcha qoida: **hech kim o'zining rolini yoki holatini o'zgartira olmaydi** —
-ADMIN ham o'zini OWNER qila olmaydi.
+A'zolik ierarxiyasi `apps/accounts/services.py` da: `guard_role_hierarchy()`
+va `guard_last_owner()`.
+
+### Bir odam, bir nechta rol
+
+Bitta odam bir markazda bir nechta rolda bo'lishi mumkin (masalan ACCOUNTANT
+va TEACHER). Bu rollar bir-birining ichida **emas** — huquqlari har xil,
+shuning uchun ruxsat barcha faol rollar bo'yicha tekshiriladi
+(`request.memberships`). Obyekt darajasidagi cheklov esa faqat ruxsatni
+TEACHER roli berayotgan bo'lsa qo'llanadi.
+
+Davomat yozilganda `marked_by` ga darsga biriktirilgan a'zolik yoziladi —
+ACCOUNTANT emas, TEACHER.
 
 ---
 
@@ -575,13 +617,13 @@ ADMIN ham o'zini OWNER qila olmaydi.
 | Chora | Holati |
 |---|---|
 | Tenant ajratish | `X-Center-Id`, begona obyekt → 404, `center` serverda o'rnatiladi |
-| Rol huquqlari | `HasCenterRole`, obyekt darajasida ham |
+| Rol huquqlari | `HasCenterRole`, obyekt darajasida ham; a'zolik ierarxiyasi `guard_role_hierarchy` |
 | SUSPENDED markaz | ishlamaydi → 403 |
 | Audit o'zgarmasligi | `save`, `delete`, `QuerySet.update`, `bulk_update` — hammasi yopiq |
 | Login brute-force | `10/min` tezlik cheklovi (`ScopedRateThrottle`), IP `NUM_PROXIES` bo'yicha aniqlanadi |
 | Token muddati | access 1 soat, refresh 7 kun, yangilashda eski refresh qora ro'yxatga |
 | Parol validatorlari | Django'ning 4 ta standart validatori yoqilgan |
-| HTTPS | `SECURE_HTTPS=True` → HSTS + SSL redirect + secure cookie |
+| HTTPS | `SECURE_HTTPS=True` → SSL redirect + secure cookie + HSTS (pastga qarang) |
 | Sahifalash | `PAGE_SIZE=50` — bitta javobda minglab yozuv kelmaydi |
 
 ### `NUM_PROXIES` — nega muhim
@@ -610,10 +652,34 @@ mijozning o'zi yozgan qiymatga qaytib qolasiz.
 > umumiy cache (Redis/Memcached) kerak — lekin u yangi paket va
 > infratuzilma talab qiladi, shuning uchun bu bosqichda qo'shilmadi.
 
+### HSTS — nega hammasi yoqilmagan
+
+`SECURE_HTTPS=True` bo'lganda HSTS sarlavhasi yuboriladi, lekin uning ikki
+qo'shimchasi standart holda **o'chiq** va `.env` dan boshqariladi:
+
+| Sozlama | Standart | Qachon yoqiladi |
+|---|---|---|
+| `SECURE_HSTS_SECONDS` | `31536000` (1 yil) | HTTPS barqaror ishlaganda |
+| `SECURE_HSTS_INCLUDE_SUBDOMAINS` | `False` | Barcha subdomenlarning sertifikati tayyor bo'lganda |
+| `SECURE_HSTS_PRELOAD` | `False` | Qaytarish niyati bo'lmaganda |
+
+Sabab: markazlar uchun subdomen rejasi bor (`Center.slug`), va barcha
+subdomenlarni HTTPS ga majburlashdan oldin ularning sertifikati ishlashi
+kerak. `preload` esa brauzerlar ro'yxatiga tushgandan keyin qaytarish oylar
+oladigan qaror.
+
+Shu sababli `SECURE_HTTPS=True` bilan `check --deploy` ikkita ogohlantirish
+beradi — `security.W005` va `security.W021`. Ular **ataylab qoldirilgan**:
+`SILENCED_SYSTEM_CHECKS` bilan yashirilmadi, chunki ogohlantirish subdomen
+rejasi bajarilganda buni yoqishni eslatib turadi.
+
 Hali qilinmagan (keyingi bosqichlarda ko'rib chiqiladi):
 
 - **Logout endpointi yo'q** — qora ro'yxat mexanizmi yoqilgan, lekin foydalanuvchi
   o'z tokenini bekor qiladigan endpoint hali qo'shilmagan
 - `Group.status = FINISHED` faqat Django admin orqali qo'yiladi
+- Bekor qilingan guruh qayta faollashmaydi — o'rniga yangi guruh ochiladi
+  (CANCELLED darslarni "guruh bekor qilgani uchun" va "qo'lda bekor
+  qilingan" deb ajratish uchun yangi maydon kerak bo'lardi)
 - Bayramni **o'chirish** darslarni qaytarmaydi (sanasini o'zgartirish qaytaradi);
   o'chirgandan keyin guruhni qayta `/activate/` qilish kerak

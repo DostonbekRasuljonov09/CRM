@@ -405,3 +405,40 @@ class LessonCancelTest(AttendanceBaseTest):
         )
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self.audit_yozuvlari(self.lesson_future).count(), oldingi)
+
+
+class AttendanceReadAccessTest(AttendanceBaseTest):
+    """`action_roles` faqat yozish so'rovlariga qo'llanadi.
+
+    Aks holda ACCOUNTANT davomatni ko'ra olmasdi - bu to'lovlar
+    bosqichida kerak bo'ladi.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.hisobchi = make_user("hisobchi@a.uz", "+998900000033")
+        make_membership(self.hisobchi, self.center, role=Membership.Role.ACCOUNTANT)
+        self.hisobchi_headers = auth_headers(
+            get_token(self.client, "hisobchi@a.uz"), self.center
+        )
+
+    def test_i7a_accountant_can_read_attendance(self):
+        response = self.client.get(
+            f"/api/lessons/{self.lesson_today.id}/attendance/",
+            headers=self.hisobchi_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_i7b_accountant_still_cannot_write_attendance(self):
+        response = self.client.post(
+            f"/api/lessons/{self.lesson_today.id}/attendance/",
+            {"items": [{"student": str(self.student.id), "status": "PRESENT"}]},
+            content_type="application/json",
+            headers=self.hisobchi_headers,
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+
+    def test_i7c_staff_list_is_still_closed_for_accountant(self):
+        """MembershipViewSet `read_roles` ishlatadi - unga ta'sir qilmaydi."""
+        response = self.client.get("/api/memberships/", headers=self.hisobchi_headers)
+        self.assertEqual(response.status_code, 403, response.content)

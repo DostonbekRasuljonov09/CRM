@@ -192,7 +192,15 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = SECURE_HTTPS
 
     if SECURE_HTTPS:
-        SECURE_HSTS_SECONDS = 31536000  # 1 yil
-        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-        SECURE_HSTS_PRELOAD = True
+        SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 31536000)  # 1 yil
+        # Bu ikkalasi ataylab standart holda o'chiq:
+        # - INCLUDE_SUBDOMAINS: markazlar uchun subdomen rejasi bor
+        #   (Center.slug), barcha subdomenlarni HTTPS ga majburlashdan oldin
+        #   ularning sertifikati tayyor bo'lishi kerak
+        # - PRELOAD: brauzerlar ro'yxatiga tushgandan keyin qaytarish
+        #   oylar oladi - bu qaytarib bo'lmaydigan qaror
+        # Shu sababli `check --deploy` security.W005 va W021 ogohlantirishlarini
+        # beradi. Ular ataylab qoldirilgan, yashirilmagan.
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+        SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
         SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
