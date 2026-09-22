@@ -331,3 +331,77 @@ class MultiRoleAttendanceTest(AttendanceBaseTest):
             self.lesson_today, self.headers_for("hisobchi@a.uz")
         )
         self.assertEqual(response.status_code, 403, response.content)
+
+
+class LessonCancelTest(AttendanceBaseTest):
+    """4-muammo: TEACHER darsni bekor qilardi va audit yozilmasdi."""
+
+    def as_teacher(self, url, data):
+        return self.client.patch(
+            url,
+            data,
+            content_type="application/json",
+            headers=auth_headers(get_token(self.client, "teacher@a.uz"), self.center),
+        )
+
+    def audit_yozuvlari(self, lesson):
+        return AuditLog.objects.filter(
+            object_type="lessons.Lesson", object_id=str(lesson.id)
+        )
+
+    def test_i4a_teacher_cannot_cancel_lesson(self):
+        response = self.as_teacher(
+            f"/api/lessons/{self.lesson_future.id}/", {"status": "CANCELLED"}
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+
+        self.lesson_future.refresh_from_db()
+        self.assertEqual(self.lesson_future.status, Lesson.Status.PLANNED)
+
+    def test_i4b_teacher_can_still_write_topic(self):
+        response = self.as_teacher(
+            f"/api/lessons/{self.lesson_future.id}/", {"topic": "Present Perfect"}
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        self.lesson_future.refresh_from_db()
+        self.assertEqual(self.lesson_future.topic, "Present Perfect")
+
+    def test_i4c_teacher_cannot_send_status_with_topic(self):
+        """`status` bilan birga `topic` yuborilsa ham to'siladi."""
+        response = self.as_teacher(
+            f"/api/lessons/{self.lesson_future.id}/",
+            {"topic": "Mavzu", "status": "CANCELLED"},
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+
+        self.lesson_future.refresh_from_db()
+        self.assertEqual(self.lesson_future.status, Lesson.Status.PLANNED)
+        self.assertEqual(self.lesson_future.topic, "")
+
+    def test_i4d_admin_cancel_is_audited(self):
+        oldingi = self.audit_yozuvlari(self.lesson_future).count()
+
+        response = self.api(
+            "patch", f"/api/lessons/{self.lesson_future.id}/", {"status": "CANCELLED"}
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        yozuvlar = self.audit_yozuvlari(self.lesson_future)
+        self.assertEqual(yozuvlar.count(), oldingi + 1)
+
+        log = yozuvlar.get(action=AuditLog.Action.UPDATE)
+        self.assertEqual(log.old_values, {"status": "PLANNED"})
+        self.assertEqual(log.new_values, {"status": "CANCELLED"})
+        self.assertEqual(log.center_id, self.center.id)
+        self.assertEqual(log.user_id, self.admin_user.id)
+
+    def test_i4e_topic_change_is_not_audited(self):
+        """Mavzu o'zgarishi auditga yozilmaydi - shovqin bo'lmasin."""
+        oldingi = self.audit_yozuvlari(self.lesson_future).count()
+
+        response = self.api(
+            "patch", f"/api/lessons/{self.lesson_future.id}/", {"topic": "Mavzu"}
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self.audit_yozuvlari(self.lesson_future).count(), oldingi)

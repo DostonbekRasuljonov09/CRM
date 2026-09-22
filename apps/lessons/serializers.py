@@ -1,6 +1,7 @@
 """Dars va davomat serializerlari."""
 
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 from apps.common.serializers import TenantModelSerializer
 from apps.courses.models import Room
@@ -52,6 +53,20 @@ class LessonSerializer(TenantModelSerializer):
             "teacher",
             "moved_to",
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if "status" in attrs:
+            # Darsni bekor qilish - ma'muriy amal. TEACHER ga faqat `topic`
+            # ochiq, aks holda u o'z darsini jimgina bekor qilib qo'yardi.
+            request = self.context.get("request")
+            memberships = getattr(request, "memberships", None) or []
+            if not any(m.role in ("OWNER", "ADMIN") for m in memberships):
+                raise PermissionDenied(
+                    "Darsni bekor qilish faqat OWNER va ADMIN uchun. "
+                    "Siz faqat mavzuni (`topic`) o'zgartira olasiz."
+                )
+        return attrs
 
     def validate_status(self, value):
         if value != Lesson.Status.CANCELLED:

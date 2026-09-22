@@ -5,7 +5,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
-from apps.common.utils import client_ip
+from apps.audit.models import AuditLog
+from apps.audit.services import log_action
+from apps.common.utils import client_ip, diff_values, model_snapshot
 from apps.common.viewsets import TenantReadUpdateViewSet
 from apps.lessons.models import Attendance, Lesson
 from apps.lessons.serializers import (
@@ -15,6 +17,10 @@ from apps.lessons.serializers import (
     MoveLessonSerializer,
 )
 from apps.lessons.services import mark_attendance, move_lesson
+
+# Auditda kuzatiladigan maydonlar. `topic` ataylab yo'q - mavzu tez-tez
+# o'zgaradi va audit jurnalini shovqinga to'ldiradi.
+LESSON_AUDIT_FIELDS = ["status"]
 
 
 class LessonViewSet(TenantReadUpdateViewSet):
@@ -53,6 +59,23 @@ class LessonViewSet(TenantReadUpdateViewSet):
         if params.get("date_to"):
             queryset = queryset.filter(date__lte=params["date_to"])
         return queryset
+
+    def perform_update(self, serializer):
+        before = model_snapshot(serializer.instance, LESSON_AUDIT_FIELDS)
+        lesson = serializer.save()
+        after = model_snapshot(lesson, LESSON_AUDIT_FIELDS)
+
+        old_values, new_values = diff_values(before, after)
+        if new_values:
+            log_action(
+                center=self.request.center,
+                user=self.request.user,
+                action=AuditLog.Action.UPDATE,
+                instance=lesson,
+                old_values=old_values,
+                new_values=new_values,
+                ip_address=client_ip(self.request),
+            )
 
     def _joriy_membership(self, lesson=None):
         """
